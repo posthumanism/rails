@@ -103,19 +103,18 @@ class EnqueuedJobsTest < ActiveJob::TestCase
 
   def test_assert_enqueued_jobs_with_only_option
     assert_nothing_raised do
-      assert_enqueued_jobs 1, only: HelloJob do
+      assert_enqueued_jobs 1, filter: { only: HelloJob } do
         HelloJob.perform_later("jeremy")
         LoggingJob.perform_later
       end
     end
   end
 
-  def test_assert_enqueued_jobs_with_only_and_queue_option
+  def test_assert_enqueued_jobs_with_except_option
     assert_nothing_raised do
-      assert_enqueued_jobs 1, only: HelloJob, queue: :some_queue do
-        HelloJob.set(queue: :some_queue).perform_later
-        HelloJob.set(queue: :other_queue).perform_later
-        LoggingJob.perform_later
+      assert_enqueued_jobs 1, filter: { except: HelloJob } do
+        HelloJob.perform_later
+        LoggingJob.perform_later("chova")
       end
     end
   end
@@ -131,10 +130,49 @@ class EnqueuedJobsTest < ActiveJob::TestCase
     end
   end
 
+  def test_assert_enqueued_jobs_with_only_and_except_option
+    error = assert_raise ActiveJob::TestHelper::ConflictOption do
+      assert_enqueued_jobs 1, filter: { only: HelloJob, except: HelloJob } do
+      end
+    end
+
+    assert_equal "Specify only one filter option :only or :except.", error.message
+  end
+
+  def test_assert_enqueued_jobs_with_only_and_queue_option
+    assert_nothing_raised do
+      assert_enqueued_jobs 1, filter: { only: HelloJob }, queue: :some_queue do
+        HelloJob.set(queue: :some_queue).perform_later
+        HelloJob.set(queue: :other_queue).perform_later
+        LoggingJob.perform_later
+      end
+    end
+  end
+
+  def test_assert_enqueued_jobs_with_except_and_queue_option
+    assert_nothing_raised do
+      assert_enqueued_jobs 1, filter: { except: LoggingJob }, queue: :some_queue do
+        HelloJob.set(queue: :some_queue).perform_later
+        HelloJob.set(queue: :other_queue).perform_later
+        LoggingJob.perform_later
+      end
+    end
+  end
+
   def test_assert_enqueued_jobs_with_only_option_and_none_sent
     error = assert_raise ActiveSupport::TestCase::Assertion do
-      assert_enqueued_jobs 1, only: HelloJob do
+      assert_enqueued_jobs 1, filter: { only: HelloJob } do
         LoggingJob.perform_later
+      end
+    end
+
+    assert_match(/1 .* but 0/, error.message)
+  end
+
+  def test_assert_enqueued_jobs_with_except_option_and_none_sent
+    error = assert_raise ActiveSupport::TestCase::Assertion do
+      assert_enqueued_jobs 1, filter: { except: HelloJob } do
+        HelloJob.perform_later
       end
     end
 
@@ -143,7 +181,7 @@ class EnqueuedJobsTest < ActiveJob::TestCase
 
   def test_assert_enqueued_jobs_with_only_option_and_too_few_sent
     error = assert_raise ActiveSupport::TestCase::Assertion do
-      assert_enqueued_jobs 5, only: HelloJob do
+      assert_enqueued_jobs 5, filter: { only: HelloJob } do
         HelloJob.perform_later("jeremy")
         4.times { LoggingJob.perform_later }
       end
@@ -152,10 +190,31 @@ class EnqueuedJobsTest < ActiveJob::TestCase
     assert_match(/5 .* but 1/, error.message)
   end
 
+  def test_assert_enqueued_jobs_with_except_option_and_too_few_sent
+    error = assert_raise ActiveSupport::TestCase::Assertion do
+      assert_enqueued_jobs 5, filter: { except: HelloJob } do
+        4.times { HelloJob.perform_later }
+        LoggingJob.perform_later("chova")
+      end
+    end
+
+    assert_match(/5 .* but 1/, error.message)
+  end
+
   def test_assert_enqueued_jobs_with_only_option_and_too_many_sent
     error = assert_raise ActiveSupport::TestCase::Assertion do
-      assert_enqueued_jobs 1, only: HelloJob do
+      assert_enqueued_jobs 1, filter: { only: HelloJob } do
         2.times { HelloJob.perform_later("jeremy") }
+      end
+    end
+
+    assert_match(/1 .* but 2/, error.message)
+  end
+
+  def test_assert_enqueued_jobs_with_except_option_and_too_many_sent
+    error = assert_raise ActiveSupport::TestCase::Assertion do
+      assert_enqueued_jobs 1, filter: { except: HelloJob } do
+        2.times { LoggingJob.perform_later("chova") }
       end
     end
 
@@ -164,25 +223,52 @@ class EnqueuedJobsTest < ActiveJob::TestCase
 
   def test_assert_enqueued_jobs_with_only_option_as_array
     assert_nothing_raised do
-      assert_enqueued_jobs 2, only: [HelloJob, LoggingJob] do
+      assert_enqueued_jobs 2, filter: { only: [HelloJob, LoggingJob] } do
         HelloJob.perform_later("jeremy")
         LoggingJob.perform_later("stewie")
-        RescueJob.perform_later("david")
+        RescueJob.perform_later
+      end
+    end
+  end
+
+  def test_assert_enqueued_jobs_with_except_option_as_array
+    assert_nothing_raised do
+      assert_enqueued_jobs 1, filter: { except: [HelloJob, LoggingJob] } do
+        HelloJob.perform_later
+        LoggingJob.perform_later
+        RescueJob.perform_later("chova")
       end
     end
   end
 
   def test_assert_no_enqueued_jobs_with_only_option
     assert_nothing_raised do
-      assert_no_enqueued_jobs only: HelloJob do
+      assert_no_enqueued_jobs filter: { only: HelloJob } do
         LoggingJob.perform_later
       end
     end
   end
 
+  def test_assert_no_enqueued_jobs_with_except_option
+    assert_nothing_raised do
+      assert_no_enqueued_jobs filter: { except: HelloJob } do
+        HelloJob.perform_later
+      end
+    end
+  end
+
+  def test_assert_no_enqueued_jobs_with_only_and_except_option
+    error = assert_raise ActiveJob::TestHelper::ConflictOption do
+      assert_no_enqueued_jobs filter: { only: HelloJob, except: HelloJob } do
+      end
+    end
+
+    assert_equal "Specify only one filter option :only or :except.", error.message
+  end
+
   def test_assert_no_enqueued_jobs_with_only_option_failure
     error = assert_raise ActiveSupport::TestCase::Assertion do
-      assert_no_enqueued_jobs only: HelloJob do
+      assert_no_enqueued_jobs filter: { only: HelloJob } do
         HelloJob.perform_later("jeremy")
         LoggingJob.perform_later
       end
@@ -191,10 +277,30 @@ class EnqueuedJobsTest < ActiveJob::TestCase
     assert_match(/0 .* but 1/, error.message)
   end
 
+  def test_assert_no_enqueued_jobs_with_except_option_failure
+    error = assert_raise ActiveSupport::TestCase::Assertion do
+      assert_no_enqueued_jobs filter: { except: HelloJob } do
+        HelloJob.perform_later
+        LoggingJob.perform_later("chova")
+      end
+    end
+
+    assert_match(/0 .* but 1/, error.message)
+  end
+
   def test_assert_no_enqueued_jobs_with_only_option_as_array
     assert_nothing_raised do
-      assert_no_enqueued_jobs only: [HelloJob, RescueJob] do
+      assert_no_enqueued_jobs filter: { only: [HelloJob, RescueJob] } do
         LoggingJob.perform_later
+      end
+    end
+  end
+
+  def test_assert_no_enqueued_jobs_with_except_option_as_array
+    assert_nothing_raised do
+      assert_no_enqueued_jobs filter: { except: [HelloJob, RescueJob] } do
+        HelloJob.perform_later
+        RescueJob.perform_later
       end
     end
   end
@@ -273,14 +379,60 @@ class EnqueuedJobsTest < ActiveJob::TestCase
 
     assert_equal 2, queue_adapter.enqueued_jobs.count
   end
+
+  def test_assert_enqueue_jobs_with_only_option_doesnt_leak_outside_the_block
+    assert_nil queue_adapter.filter
+    assert_enqueued_jobs(0, filter: { only: HelloJob }) do
+      assert_equal({ only: HelloJob }, queue_adapter.filter)
+    end
+    assert_nil queue_adapter.filter
+  end
+
+  def test_assert_enqueue_jobs_with_except_option_doesnt_leak_outside_the_block
+    assert_nil queue_adapter.filter
+    assert_enqueued_jobs(0, filter: { except: HelloJob }) do
+      assert_equal({ except: HelloJob }, queue_adapter.filter)
+    end
+    assert_nil queue_adapter.filter
+  end
+
+  def test_assert_enqueue_jobs_with_only_and_except_option_doesnt_leak_outside_the_block
+    assert_nil queue_adapter.filter
+    error = assert_raise ActiveJob::TestHelper::ConflictOption do
+      assert_enqueued_jobs(0, filter: { only: HelloJob, except: HelloJob }) do
+      end
+    end
+    assert_equal "Specify only one filter option :only or :except.", error.message
+    assert_nil queue_adapter.filter
+  end
 end
 
 class PerformedJobsTest < ActiveJob::TestCase
   def test_performed_enqueue_jobs_with_only_option_doesnt_leak_outside_the_block
     assert_nil queue_adapter.filter
-    perform_enqueued_jobs only: HelloJob do
-      assert_equal HelloJob, queue_adapter.filter
+    perform_enqueued_jobs(filter: { only: HelloJob }) do
+      assert_equal({ only: HelloJob }, queue_adapter.filter)
     end
+    assert_nil queue_adapter.filter
+  end
+
+  def test_performed_enqueue_jobs_with_except_option_doesnt_leak_outside_the_block
+    assert_nil queue_adapter.filter
+    perform_enqueued_jobs(filter: { except: HelloJob }) do
+      HelloJob.perform_later
+      RescueJob.perform_later("chova")
+      assert_equal({ except: HelloJob }, queue_adapter.filter)
+    end
+    assert_nil queue_adapter.filter
+  end
+
+  def test_performed_enqueue_jobs_with_only_and_except_option_doesnt_leak_outside_the_block
+    assert_nil queue_adapter.filter
+    error = assert_raise ActiveJob::TestHelper::ConflictOption do
+      perform_enqueued_jobs(filter: { only: HelloJob, except: HelloJob }) do
+      end
+    end
+    assert_equal "Specify only one filter option :only or :except.", error.message
     assert_nil queue_adapter.filter
   end
 
@@ -382,27 +534,65 @@ class PerformedJobsTest < ActiveJob::TestCase
 
   def test_assert_performed_jobs_with_only_option
     assert_nothing_raised do
-      assert_performed_jobs 1, only: HelloJob do
+      assert_performed_jobs 1, filter: { only: HelloJob } do
         HelloJob.perform_later("jeremy")
-        LoggingJob.perform_later
+        LoggingJob.perform_later("chova")
       end
     end
   end
 
+  def test_assert_performed_jobs_with_except_option
+    assert_nothing_raised do
+      assert_performed_jobs 1, filter: { except: HelloJob } do
+        HelloJob.perform_later
+        LoggingJob.perform_later("chova")
+      end
+    end
+  end
+
+  def test_assert_performed_jobs_with_only_and_except_option
+    error = assert_raise ActiveJob::TestHelper::ConflictOption do
+      assert_performed_jobs 1, filter: { only: HelloJob, except: HelloJob } do
+      end
+    end
+
+    assert_equal "Specify only one filter option :only or :except.", error.message
+  end
+
   def test_assert_performed_jobs_with_only_option_as_array
     assert_nothing_raised do
-      assert_performed_jobs 2, only: [HelloJob, LoggingJob] do
+      assert_performed_jobs 2, filter: { only: [HelloJob, LoggingJob] } do
         HelloJob.perform_later("jeremy")
         LoggingJob.perform_later("stewie")
-        RescueJob.perform_later("david")
+        RescueJob.perform_later
+      end
+    end
+  end
+
+  def test_assert_performed_jobs_with_except_option_as_array
+    assert_nothing_raised do
+      assert_performed_jobs 1, filter: { except: [HelloJob, LoggingJob] } do
+        HelloJob.perform_later
+        LoggingJob.perform_later
+        RescueJob.perform_later("chova")
       end
     end
   end
 
   def test_assert_performed_jobs_with_only_option_and_none_sent
     error = assert_raise ActiveSupport::TestCase::Assertion do
-      assert_performed_jobs 1, only: HelloJob do
+      assert_performed_jobs 1, filter: { only: HelloJob } do
         LoggingJob.perform_later
+      end
+    end
+
+    assert_match(/1 .* but 0/, error.message)
+  end
+
+  def test_assert_performed_jobs_with_except_option_and_none_sent
+    error = assert_raise ActiveSupport::TestCase::Assertion do
+      assert_performed_jobs 1, filter: { except: HelloJob } do
+        HelloJob.perform_later
       end
     end
 
@@ -411,7 +601,7 @@ class PerformedJobsTest < ActiveJob::TestCase
 
   def test_assert_performed_jobs_with_only_option_and_too_few_sent
     error = assert_raise ActiveSupport::TestCase::Assertion do
-      assert_performed_jobs 5, only: HelloJob do
+      assert_performed_jobs 5, filter: { only: HelloJob } do
         HelloJob.perform_later("jeremy")
         4.times { LoggingJob.perform_later }
       end
@@ -420,10 +610,31 @@ class PerformedJobsTest < ActiveJob::TestCase
     assert_match(/5 .* but 1/, error.message)
   end
 
+  def test_assert_performed_jobs_with_except_option_and_too_few_sent
+    error = assert_raise ActiveSupport::TestCase::Assertion do
+      assert_performed_jobs 5, filter: { except: HelloJob } do
+        4.times { HelloJob.perform_later }
+        LoggingJob.perform_later("chova")
+      end
+    end
+
+    assert_match(/5 .* but 1/, error.message)
+  end
+
   def test_assert_performed_jobs_with_only_option_and_too_many_sent
     error = assert_raise ActiveSupport::TestCase::Assertion do
-      assert_performed_jobs 1, only: HelloJob do
+      assert_performed_jobs 1, filter: { only: HelloJob } do
         2.times { HelloJob.perform_later("jeremy") }
+      end
+    end
+
+    assert_match(/1 .* but 2/, error.message)
+  end
+
+  def test_assert_performed_jobs_with_except_option_and_too_many_sent
+    error = assert_raise ActiveSupport::TestCase::Assertion do
+      assert_performed_jobs 1, filter: { except: HelloJob } do
+        2.times { LoggingJob.perform_later("chova") }
       end
     end
 
@@ -432,25 +643,62 @@ class PerformedJobsTest < ActiveJob::TestCase
 
   def test_assert_no_performed_jobs_with_only_option
     assert_nothing_raised do
-      assert_no_performed_jobs only: HelloJob do
+      assert_no_performed_jobs filter: { only: HelloJob } do
+        LoggingJob.perform_later("chova")
+      end
+    end
+  end
+
+  def test_assert_no_performed_jobs_with_except_option
+    assert_nothing_raised do
+      assert_no_performed_jobs filter: { except: HelloJob } do
+        HelloJob.perform_later("chova")
+      end
+    end
+  end
+
+  def test_assert_no_performed_jobs_with_only_and_except_option
+    error = assert_raise ActiveJob::TestHelper::ConflictOption do
+      assert_no_performed_jobs filter: { only: HelloJob, except: HelloJob } do
+      end
+    end
+
+    assert_equal "Specify only one filter option :only or :except.", error.message
+  end
+
+  def test_assert_no_performed_jobs_with_only_option_as_array
+    assert_nothing_raised do
+      assert_no_performed_jobs filter: { only: [HelloJob, RescueJob] } do
         LoggingJob.perform_later
       end
     end
   end
 
-  def test_assert_no_performed_jobs_with_only_option_as_array
+  def test_assert_no_performed_jobs_with_except_option_as_array
     assert_nothing_raised do
-      assert_no_performed_jobs only: [HelloJob, RescueJob] do
-        LoggingJob.perform_later
+      assert_no_performed_jobs filter: { except: [HelloJob, RescueJob] } do
+        HelloJob.perform_later
+        RescueJob.perform_later
       end
     end
   end
 
   def test_assert_no_performed_jobs_with_only_option_failure
     error = assert_raise ActiveSupport::TestCase::Assertion do
-      assert_no_performed_jobs only: HelloJob do
+      assert_no_performed_jobs filter: { only: HelloJob } do
         HelloJob.perform_later("jeremy")
-        LoggingJob.perform_later
+        LoggingJob.perform_later("stewie")
+      end
+    end
+
+    assert_match(/0 .* but 1/, error.message)
+  end
+
+  def test_assert_no_performed_jobs_with_except_option_failure
+    error = assert_raise ActiveSupport::TestCase::Assertion do
+      assert_no_performed_jobs filter: { except: HelloJob } do
+        HelloJob.perform_later
+        LoggingJob.perform_later("chova")
       end
     end
 

@@ -24,17 +24,21 @@ module ActiveJob
       end
 
       def enqueue(job) #:nodoc:
-        return if filtered?(job)
+        return if filtered?(job.class)
 
         job_data = job_to_hash(job)
         enqueue_or_perform(perform_enqueued_jobs, job, job_data)
       end
 
       def enqueue_at(job, timestamp) #:nodoc:
-        return if filtered?(job)
+        return if filtered?(job.class)
 
         job_data = job_to_hash(job, at: timestamp)
         enqueue_or_perform(perform_enqueued_at_jobs, job, job_data)
+      end
+
+      def filtered?(job_class)
+        !!filter && (filtered_with_only?(job_class) || filtered_with_except?(job_class))
       end
 
       private
@@ -51,8 +55,12 @@ module ActiveJob
           end
         end
 
-        def filtered?(job)
-          filter && !Array(filter).include?(job.class)
+        def filtered_with_only?(job_class)
+          !!filter[:only] && !Array(filter[:only]).include?(job_class)
+        end
+
+        def filtered_with_except?(job_class)
+          !!filter[:except] && Array(filter[:except]).include?(job_class)
         end
     end
   end
