@@ -4,6 +4,8 @@ require "active_support/core_ext/hash/keys"
 module ActiveJob
   # Provides helper methods for testing Active Job
   module TestHelper
+    class ConflictOption < StandardError; end
+
     delegate :enqueued_jobs, :enqueued_jobs=,
       :performed_jobs, :performed_jobs=,
       to: :queue_adapter
@@ -90,7 +92,7 @@ module ActiveJob
     # The number of times a specific job is enqueued can be asserted.
     #
     #   def test_logging_job
-    #     assert_enqueued_jobs 1, only: LoggingJob do
+    #     assert_enqueued_jobs 1, filter: { only: LoggingJob } do
     #       LoggingJob.perform_later
     #       HelloJob.perform_later('jeremy')
     #     end
@@ -104,14 +106,17 @@ module ActiveJob
     #       HelloJob.perform_later('elfassy')
     #     end
     #   end
-    def assert_enqueued_jobs(number, only: nil, queue: nil)
+    def assert_enqueued_jobs(number, filter: {}, queue: nil)
+      validate_filter(filter)
       if block_given?
-        original_count = enqueued_jobs_size(only: only, queue: queue)
+        original_count = enqueued_jobs_size(filter: filter, queue: queue)
+        queue_adapter.filter = filter
         yield
-        new_count = enqueued_jobs_size(only: only, queue: queue)
+        new_count = enqueued_jobs_size(filter: filter, queue: queue)
+        queue_adapter.filter = nil
         assert_equal number, new_count - original_count, "#{number} jobs expected, but #{new_count - original_count} were enqueued"
       else
-        actual_count = enqueued_jobs_size(only: only, queue: queue)
+        actual_count = enqueued_jobs_size(filter: filter, queue: queue)
         assert_equal number, actual_count, "#{number} jobs expected, but #{actual_count} were enqueued"
       end
     end
@@ -135,7 +140,7 @@ module ActiveJob
     # It can be asserted that no jobs of a specific kind are enqueued:
     #
     #   def test_no_logging
-    #     assert_no_enqueued_jobs only: LoggingJob do
+    #     assert_no_enqueued_jobs filter: { only: LoggingJob } do
     #       HelloJob.perform_later('jeremy')
     #     end
     #   end
@@ -143,8 +148,8 @@ module ActiveJob
     # Note: This assertion is simply a shortcut for:
     #
     #   assert_enqueued_jobs 0, &block
-    def assert_no_enqueued_jobs(only: nil, &block)
-      assert_enqueued_jobs 0, only: only, &block
+    def assert_no_enqueued_jobs(filter: {}, &block)
+      assert_enqueued_jobs 0, filter: filter, &block
     end
 
     # Asserts that the number of performed jobs matches the given number.
@@ -179,31 +184,52 @@ module ActiveJob
     #     end
     #   end
     #
-    # The block form supports filtering. If the :only option is specified,
+    # The block form supports filtering.
+    # If the filter[:only] option is specified,
     # then only the listed job(s) will be performed.
     #
-    #     def test_hello_job
-    #       assert_performed_jobs 1, only: HelloJob do
-    #         HelloJob.perform_later('jeremy')
-    #         LoggingJob.perform_later
-    #       end
+    #   def test_only_hello_job
+    #     assert_performed_jobs 1, filter: { only: HelloJob } do
+    #       HelloJob.perform_later('jeremy') # will be performed
+    #       LoggingJob.perform_later # will not be performed
     #     end
+    #   end
+    #
+    # If the filter[:except] option is specified,
+    # then all enqueued jobs except the listed job(s) will be performed.
+    #
+    #   def test_except_hello_job
+    #     assert_performed_jobs 1, filter: { except: HelloJob } do
+    #       HelloJob.perform_later('jeremy') # will not be performed
+    #       LoggingJob.perform_later # will be performed
+    #     end
+    #   end
+    #
+    # Both filter[:only] and filter[:except] options cannot be specified.
+    # Therefore, specify one filter option.
+    #
+    #   def test_only_and_except_hello_job
+    #     assert_performed_jobs 1, filter: { only: HelloJob, except: HelloJob } do
+    #       # will raise ActiveJob::TestHelper::ConflictOption
+    #     end　
+    #   end
     #
     # An array may also be specified, to support testing multiple jobs.
     #
-    #     def test_hello_and_logging_jobs
-    #       assert_nothing_raised do
-    #         assert_performed_jobs 2, only: [HelloJob, LoggingJob] do
-    #           HelloJob.perform_later('jeremy')
-    #           LoggingJob.perform_later('stewie')
-    #           RescueJob.perform_later('david')
-    #         end
+    #   def test_hello_and_logging_jobs
+    #     assert_nothing_raised do
+    #       assert_performed_jobs 2, filter: { only: [HelloJob, LoggingJob] } do
+    #         HelloJob.perform_later('jeremy')
+    #         LoggingJob.perform_later('stewie')
+    #         RescueJob.perform_later('david')
     #       end
     #     end
-    def assert_performed_jobs(number, only: nil)
+    #   end
+    def assert_performed_jobs(number, filter: {})
+      validate_filter(filter)
       if block_given?
         original_count = performed_jobs.size
-        perform_enqueued_jobs(only: only) { yield }
+        perform_enqueued_jobs(filter: filter) { yield }
         new_count = performed_jobs.size
         assert_equal number, new_count - original_count,
           "#{number} jobs expected, but #{new_count - original_count} were performed"
@@ -232,20 +258,39 @@ module ActiveJob
     #     end
     #   end
     #
-    # The block form supports filtering. If the :only option is specified,
+    # The block form supports filtering.
+    # If the filter[:only] option is specified,
     # then only the listed job(s) will not be performed.
     #
     #   def test_no_logging
-    #     assert_no_performed_jobs only: LoggingJob do
-    #       HelloJob.perform_later('jeremy')
+    #     assert_no_performed_jobs filter: { only: LoggingJob } do
+    #       HelloJob.perform_later('jeremy') # will not be performed
     #     end
     #   end
+    #
+    # If the filter[:except] option is specified,
+    # then all enqueued jobs except the listed job(s) will be performed.
+    #
+    #   def test_except_hello_job
+    #     assert_no_performed_jobs filter: { except: HelloJob } do
+    #       HelloJob.perform_later('jeremy') # will not be performed
+    #     end
+    #   end
+    #
+    # Both filter[:only] and filter[:except] options cannot be specified.
+    # Therefore, specify one option.
+    #
+    #     def test_only_and_except_hello_job
+    #       assert_performed_jobs 1, filter: { only: HelloJob, except: HelloJob } do
+    #         # will raise ActiveJob::TestHelper::ConflictOption
+    #       end
+    #     end
     #
     # Note: This assertion is simply a shortcut for:
     #
     #   assert_performed_jobs 0, &block
-    def assert_no_performed_jobs(only: nil, &block)
-      assert_performed_jobs 0, only: only, &block
+    def assert_no_performed_jobs(filter: {}, &block)
+      assert_performed_jobs 0, filter: filter, &block
     end
 
     # Asserts that the job passed in the block has been enqueued with the given arguments.
@@ -305,17 +350,40 @@ module ActiveJob
     #     assert_performed_jobs 1
     #   end
     #
-    # This method also supports filtering. If the +:only+ option is specified,
+    # This method also supports filtering.
+    # If the filter[:only] option is specified,
     # then only the listed job(s) will be performed.
     #
     #   def test_perform_enqueued_jobs_with_only
-    #     perform_enqueued_jobs(only: MyJob) do
+    #     perform_enqueued_jobs(filter: { only: MyJob }) do
     #       MyJob.perform_later(1, 2, 3) # will be performed
     #       HelloJob.perform_later(1, 2, 3) # will not be performed
     #     end
     #     assert_performed_jobs 1
     #   end
-    def perform_enqueued_jobs(only: nil)
+    #
+    # If the filter[:except] option is specified,
+    # then all enqueued jobs except the listed job(s) will be performed.
+    #
+    #   def test_perform_enqueued_jobs_with_only
+    #     perform_enqueued_jobs(filter: { except: MyJob }) do
+    #       MyJob.perform_later(1, 2, 3) # will not be performed
+    #       HelloJob.perform_later(1, 2, 3) # will be performed
+    #     end
+    #     assert_performed_jobs 1
+    #   end
+    #
+    # Oh, what a thing!
+    # :only and :except can not be used at the same time!
+    #
+    #   def test_perform_enqueued_jobs_with_only
+    #     perform_enqueued_jobs(filter: { only: MyJob, except: MyJob }) do
+    #       # Woops! ActiveJob::TestHelper::ConflictOption attacks on you!
+    #     end
+    #     assert_performed_jobs 1
+    #   end
+    def perform_enqueued_jobs(filter: {})
+      validate_filter(filter)
       old_perform_enqueued_jobs = queue_adapter.perform_enqueued_jobs
       old_perform_enqueued_at_jobs = queue_adapter.perform_enqueued_at_jobs
       old_filter = queue_adapter.filter
@@ -323,7 +391,7 @@ module ActiveJob
       begin
         queue_adapter.perform_enqueued_jobs = true
         queue_adapter.perform_enqueued_at_jobs = true
-        queue_adapter.filter = only
+        queue_adapter.filter = filter
         yield
       ensure
         queue_adapter.perform_enqueued_jobs = old_perform_enqueued_jobs
@@ -350,16 +418,13 @@ module ActiveJob
         performed_jobs.clear
       end
 
-      def enqueued_jobs_size(only: nil, queue: nil)
+      def enqueued_jobs_size(filter: {}, queue: nil)
         enqueued_jobs.count do |job|
           job_class = job.fetch(:job)
-          if only
-            next false unless Array(only).include?(job_class)
-          end
           if queue
             next false unless queue.to_s == job.fetch(:queue, job_class.queue_name)
           end
-          true
+          !queue_adapter.filtered?(job_class)
         end
       end
 
@@ -381,6 +446,12 @@ module ActiveJob
         (ActiveJob::Base.descendants << ActiveJob::Base).select do |klass|
           # only override explicitly set adapters, a quirk of `class_attribute`
           klass.singleton_class.public_instance_methods(false).include?(:_queue_adapter)
+        end
+      end
+
+      def validate_filter(filter)
+        if filter[:only] && filter[:except]
+          raise ActiveJob::TestHelper::ConflictOption, "Specify only one filter option :only or :except."
         end
       end
   end
