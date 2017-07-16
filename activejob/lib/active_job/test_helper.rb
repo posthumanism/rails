@@ -106,14 +106,14 @@ module ActiveJob
     #       HelloJob.perform_later('elfassy')
     #     end
     #   end
-    def assert_enqueued_jobs(number, only: nil, queue: nil)
+    def assert_enqueued_jobs(number, only: nil, except: except, queue: nil)
       if block_given?
-        original_count = enqueued_jobs_size(only: only, queue: queue)
+        original_count = enqueued_jobs_size(only: only, except: except, queue: queue)
         yield
-        new_count = enqueued_jobs_size(only: only, queue: queue)
+        new_count = enqueued_jobs_size(only: only, except: except, queue: queue)
         assert_equal number, new_count - original_count, "#{number} jobs expected, but #{new_count - original_count} were enqueued"
       else
-        actual_count = enqueued_jobs_size(only: only, queue: queue)
+        actual_count = enqueued_jobs_size(only: only, except: except, queue: queue)
         assert_equal number, actual_count, "#{number} jobs expected, but #{actual_count} were enqueued"
       end
     end
@@ -145,8 +145,8 @@ module ActiveJob
     # Note: This assertion is simply a shortcut for:
     #
     #   assert_enqueued_jobs 0, &block
-    def assert_no_enqueued_jobs(only: nil, &block)
-      assert_enqueued_jobs 0, only: only, &block
+    def assert_no_enqueued_jobs(only: nil, except: except, &block)
+      assert_enqueued_jobs 0, only: only, except: except, &block
     end
 
     # Asserts that the number of performed jobs matches the given number.
@@ -202,10 +202,10 @@ module ActiveJob
     #         end
     #       end
     #     end
-    def assert_performed_jobs(number, only: nil)
+    def assert_performed_jobs(number, only: nil, except: nil)
       if block_given?
         original_count = performed_jobs.size
-        perform_enqueued_jobs(only: only) { yield }
+        perform_enqueued_jobs(only: only, except: except) { yield }
         new_count = performed_jobs.size
         assert_equal number, new_count - original_count,
           "#{number} jobs expected, but #{new_count - original_count} were performed"
@@ -246,8 +246,8 @@ module ActiveJob
     # Note: This assertion is simply a shortcut for:
     #
     #   assert_performed_jobs 0, &block
-    def assert_no_performed_jobs(only: nil, &block)
-      assert_performed_jobs 0, only: only, &block
+    def assert_no_performed_jobs(only: nil, except: nil, &block)
+      assert_performed_jobs 0, only: only, except: except, &block
     end
 
     # Asserts that the job passed in the block has been enqueued with the given arguments.
@@ -317,20 +317,23 @@ module ActiveJob
     #     end
     #     assert_performed_jobs 1
     #   end
-    def perform_enqueued_jobs(only: nil)
+    def perform_enqueued_jobs(only: nil, except: nil)
       old_perform_enqueued_jobs = queue_adapter.perform_enqueued_jobs
       old_perform_enqueued_at_jobs = queue_adapter.perform_enqueued_at_jobs
       old_filter = queue_adapter.filter
+      old_reject = queue_adapter.reject
 
       begin
         queue_adapter.perform_enqueued_jobs = true
         queue_adapter.perform_enqueued_at_jobs = true
         queue_adapter.filter = only
+        queue_adapter.reject = except
         yield
       ensure
         queue_adapter.perform_enqueued_jobs = old_perform_enqueued_jobs
         queue_adapter.perform_enqueued_at_jobs = old_perform_enqueued_at_jobs
         queue_adapter.filter = old_filter
+        queue_adapter.reject = old_reject
       end
     end
 
@@ -352,11 +355,13 @@ module ActiveJob
         performed_jobs.clear
       end
 
-      def enqueued_jobs_size(only: nil, queue: nil)
+      def enqueued_jobs_size(only: nil, except: nil, queue: nil)
         enqueued_jobs.count do |job|
           job_class = job.fetch(:job)
           if only
             next false unless Array(only).include?(job_class)
+          elsif except
+            next false if Array(except).include?(job_class)
           end
           if queue
             next false unless queue.to_s == job.fetch(:queue, job_class.queue_name)
