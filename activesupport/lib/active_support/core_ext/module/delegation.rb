@@ -154,13 +154,17 @@ class Module
   #   Foo.new("Bar").name # raises NoMethodError: undefined method `name'
   #
   # The target method must be public, otherwise it will raise +NoMethodError+.
-  def delegate(*methods, to: nil, prefix: nil, allow_nil: nil)
+  def delegate(*methods, to: nil, prefix: nil, allow_nil: nil, scope: :public)
     unless to
       raise ArgumentError, "Delegation needs a target. Supply an options hash with a :to key as the last argument (e.g. delegate :hello, to: :greeter)."
     end
 
     if prefix == true && /^[^a-z_]/.match?(to)
       raise ArgumentError, "Can only automatically set the delegation prefix when delegating to a method."
+    end
+
+    unless [:public, :private, :protected].include?(scope)
+      raise ArgumentError, "Method scope allows only :public, :private or :protected."
     end
 
     method_prefix = \
@@ -215,6 +219,10 @@ class Module
       end
 
       module_eval(method_def, file, line)
+    end
+
+    unless scope == :public
+      module_eval("#{scope} *#{methods}", file, line)
     end
   end
 
